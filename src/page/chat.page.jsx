@@ -1,167 +1,129 @@
 import { Container, Row, Col } from "react-bootstrap";
 import { ContactSidebar } from "../component/contactSidebar.component";
 import { ChatMessage } from "../component/chatMessage.component";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Form, InputGroup, Button } from "react-bootstrap";
-
-const sampleContacts = [
-  {
-    id: 1,
-    name: "John Smith",
-    lastMessage: "Pretty good! Just working on some projects.",
-    timestamp: "2m ago",
-    unread: 2,
-    online: true,
-  },
-  {
-    id: 2,
-    name: "Sarah Johnson",
-    lastMessage: "See you tomorrow!",
-    timestamp: "1h ago",
-    online: true,
-  },
-  {
-    id: 3,
-    name: "Mike Wilson",
-    lastMessage: "Thanks for your help",
-    timestamp: "3h ago",
-    unread: 1,
-    online: false,
-  },
-  {
-    id: 4,
-    name: "Emily Davis",
-    lastMessage: "That sounds great!",
-    timestamp: "1d ago",
-    online: false,
-  },
-  {
-    id: 5,
-    name: "David Brown",
-    lastMessage: "Let me know when you're free",
-    timestamp: "2d ago",
-    online: true,
-  },
-];
-
-const contactMessages = {
-  1: [
-    {
-      id: 1,
-      text: "Hey! How are you?",
-      sender: "other",
-      timestamp: new Date(Date.now() - 300000),
-    },
-    {
-      id: 2,
-      text: "I'm doing great, thanks! How about you?",
-      sender: "user",
-      timestamp: new Date(Date.now() - 240000),
-    },
-    {
-      id: 3,
-      text: "Pretty good! Just working on some projects.",
-      sender: "other",
-      timestamp: new Date(Date.now() - 180000),
-    },
-  ],
-  2: [
-    {
-      id: 1,
-      text: "Don't forget about the meeting tomorrow",
-      sender: "other",
-      timestamp: new Date(Date.now() - 3600000),
-    },
-    {
-      id: 2,
-      text: "Thanks for reminding me!",
-      sender: "user",
-      timestamp: new Date(Date.now() - 3500000),
-    },
-    {
-      id: 3,
-      text: "See you tomorrow!",
-      sender: "other",
-      timestamp: new Date(Date.now() - 3400000),
-    },
-  ],
-  3: [
-    {
-      id: 1,
-      text: "Can you help me with the project?",
-      sender: "other",
-      timestamp: new Date(Date.now() - 10800000),
-    },
-    {
-      id: 2,
-      text: "Sure, what do you need?",
-      sender: "user",
-      timestamp: new Date(Date.now() - 10700000),
-    },
-    {
-      id: 3,
-      text: "Thanks for your help",
-      sender: "other",
-      timestamp: new Date(Date.now() - 10600000),
-    },
-  ],
-  4: [
-    {
-      id: 1,
-      text: "Want to grab coffee sometime?",
-      sender: "other",
-      timestamp: new Date(Date.now() - 86400000),
-    },
-    {
-      id: 2,
-      text: "That sounds great!",
-      sender: "other",
-      timestamp: new Date(Date.now() - 86300000),
-    },
-  ],
-  5: [
-    {
-      id: 1,
-      text: "Let me know when you're free",
-      sender: "other",
-      timestamp: new Date(Date.now() - 172800000),
-    },
-  ],
-};
+import useAxios from "../hooks/useAxios.hook";
 
 const ChatPage = () => {
-  const [activeContactId, setActiveContactId] = useState(1);
-  const [messages, setMessages] = useState(contactMessages[1]);
+  const [activeContactId, setActiveContactId] = useState(null);
+  const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState("");
+  const [activeContact, setActiveContact] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [currentUserId, setCurrentUserId] = useState(null);
+
+  const usersApi = useAxios();
+  const messagesApi = useAxios();
+  const sendApi = useAxios();
+
+  useEffect(() => {
+    usersApi.fetchData({ url: "/users", method: "GET" });
+  }, []);
+
+  useEffect(() => {
+    if (usersApi.response && Array.isArray(usersApi.response)) {
+      setUsers(usersApi.response);
+      if (usersApi.response.length > 0) {
+        setCurrentUserId(usersApi.response[0]._id);
+        if (!activeContactId) {
+          setActiveContactId(
+            usersApi.response[1]?._id || usersApi.response[0]._id
+          );
+        }
+      }
+    }
+  }, [usersApi.response]);
+
+  // Fetch messages when contact changes
+  useEffect(() => {
+    if (activeContactId) {
+      const selected = users.find((u) => u._id === activeContactId);
+      setActiveContact(selected);
+      messagesApi.fetchData({
+        url: `/messages?chatId=${activeContactId}`,
+        method: "GET",
+      });
+    }
+  }, [activeContactId, users]);
+
+  useEffect(() => {
+    if (messagesApi.response && Array.isArray(messagesApi.response)) {
+      const formattedMessages = messagesApi.response.map((msg) => {
+        const msgUserId =
+          typeof msg.user === "object" ? msg.user._id : msg.user;
+        const isSender = msgUserId?.toString() === currentUserId?.toString();
+
+        return {
+          id: msg._id,
+          text: msg.message,
+          sender: isSender ? "user" : "other",
+          timestamp: new Date(msg.createdAt),
+          user: msg.user,
+        };
+      });
+      setMessages(formattedMessages);
+    }
+  }, [messagesApi.response, currentUserId]);
 
   const handleSelectContact = (contactId) => {
     setActiveContactId(contactId);
-    setMessages(contactMessages[contactId] || []);
+    setMessages([]);
   };
 
-  const handleSendMessage = (e) => {
+  const handleSendMessage = async (e) => {
     e.preventDefault();
     if (inputMessage.trim() === "") return;
 
-    const newMessage = {
-      id: messages.length + 1,
+    const optimisticMessage = {
+      id: Date.now(),
       text: inputMessage,
       sender: "user",
       timestamp: new Date(),
+      user: currentUserId,
     };
-
-    setMessages([...messages, newMessage]);
+    setMessages([...messages, optimisticMessage]);
     setInputMessage("");
-  };
 
-  const activeContact = sampleContacts.find((c) => c.id === activeContactId);
+    try {
+      await sendApi.fetchData({
+        url: "/send",
+        method: "POST",
+        data: {
+          user: currentUserId,
+          chat: activeContactId,
+          message: inputMessage,
+        },
+      });
+      // Refresh messages
+      messagesApi.fetchData({
+        url: `/messages?chatId=${activeContactId}`,
+        method: "GET",
+      });
+    } catch (error) {
+      console.error("Failed to send message:", error);
+    }
+  };
 
   return (
     <Container fluid className="vh-100 d-flex flex-column p-0">
       {/* Header */}
       <Row className="bg-primary text-white m-0">
-        <Col className="py-3 px-4">
+        <Col className="py-3 px-4 d-flex align-items-center justify-content-between">
           <h4 className="mb-0">Chat Application</h4>
+          <Form.Select
+            value={currentUserId || ""}
+            onChange={(e) => setCurrentUserId(e.target.value)}
+            style={{ width: "200px" }}
+            className="text-dark"
+          >
+            <option value="">Select Current User</option>
+            {users.map((user) => (
+              <option key={user._id} value={user._id}>
+                {user.name} (Me)
+              </option>
+            ))}
+          </Form.Select>
         </Col>
       </Row>
 
@@ -170,7 +132,7 @@ const ChatPage = () => {
         {/* Sidebar */}
         <Col xs={12} md={4} lg={3} className="p-0 h-100 d-none d-md-block">
           <ContactSidebar
-            contacts={sampleContacts}
+            contacts={users.filter((u) => u._id !== currentUserId)}
             activeContactId={activeContactId}
             onSelectContact={handleSelectContact}
           />
@@ -185,24 +147,12 @@ const ChatPage = () => {
                 className="rounded-circle bg-secondary text-white d-flex align-items-center justify-content-center me-3 position-relative"
                 style={{ width: "40px", height: "40px" }}
               >
-                <span>{activeContact?.name.charAt(0)}</span>
-                {activeContact?.online && (
-                  <span
-                    className="position-absolute bg-success rounded-circle border border-2 border-white"
-                    style={{
-                      width: "10px",
-                      height: "10px",
-                      bottom: "2px",
-                      right: "2px",
-                    }}
-                  />
-                )}
+                <span>{activeContact?.name?.charAt(0) || "?"}</span>
               </div>
               <div>
-                <h6 className="mb-0">{activeContact?.name}</h6>
-                <small className="text-muted">
-                  {activeContact?.online ? "Online" : "Offline"}
-                </small>
+                <h6 className="mb-0">
+                  {activeContact?.name || "Select a user"}
+                </h6>
               </div>
             </div>
           </div>
@@ -231,8 +181,13 @@ const ChatPage = () => {
                   placeholder="Type a message..."
                   value={inputMessage}
                   onChange={(e) => setInputMessage(e.target.value)}
+                  disabled={!activeContactId}
                 />
-                <Button variant="primary" type="submit">
+                <Button
+                  variant="primary"
+                  type="submit"
+                  disabled={!activeContactId}
+                >
                   Send
                 </Button>
               </InputGroup>
